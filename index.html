@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ザスパ群馬 選手名鑑</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="ad-screen">
+        <video id="ad-video" src="https://firebasestorage.googleapis.com/v0/b/pilgrimage-quest-app.firebasestorage.app/o/zasupa.mp4?alt=media&token=556b61e5-1a3f-4983-b9b2-ffc8adc00a59" autoplay playsinline></video>
+        <div class="touch-prompt">画面をタッチしてください</div>
+    </div>
+
+    <div id="main-content" class="hidden">
+        <div id="app">
+            <div class="sidebar vh-100">
+                <div v-if="isLoading" class="loading-container">
+                    <div class="loading-spinner"></div>
+                    <p>Now Loading...</p>
+                </div>
+                <div v-else class="list-group overflow-auto">
+                    <div v-if="header" class="list-header">
+                        <img v-if="header.image" :src="header.image" alt="" class="header-image">
+                        <div class="header-text">
+                            <h5 class="header-title">{{ header.title }}</h5>
+                            <p class="header-description" :class="{ 'expanded': isHeaderExpanded }">
+                                {{ header.description }}
+                            </p>
+                            <button v-if="!isHeaderExpanded" @click="isHeaderExpanded = true" class="read-more-btn">
+                                続きを読む
+                            </button>
+                            <button v-else @click="isHeaderExpanded = false" class="read-more-btn">
+                                閉じる
+                            </button>
+                        </div>
+                    </div>
+
+                    <a href="#" class="list-group-item list-group-item-action"
+                       v-for="player in players"
+                       :key="player.id"
+                       @click.prevent="onPlayerClick(player)">
+                        <div class="list-item-content">
+                            <div class="player-info">
+                                <span class="player-number">{{ player.number }}</span>
+                                <span class="player-name">{{ player.name }}</span>
+                                <span class="player-position">{{ player.position }}</span>
+                            </div>
+                            <span class="list-item-comment">{{ player.comment }}</span>
+                            <img v-if="player.list_image" :src="player.list_image" alt="" class="list-item-image">
+                        </div>
+                    </a>
+                </div>
+            </div>
+
+            <div id="pitch-container" :style="pitchStyle">
+                <div v-for="player in players"
+                     :key="player.id"
+                     class="player-icon"
+                     :style="{ top: player.pitch_y + '%', left: player.pitch_x + '%' }"
+                     @click="onPlayerClick(player)">
+                    <img :src="defaultPlayerIcon" :alt="player.name">
+                    <span>{{ player.name }}</span>
+                </div>
+            </div>
+
+            <button id="back-to-ad-btn" @click="handleBackToAdClick">広告に戻る</button>
+
+            <transition name="profile-cutin">
+                <div v-if="isProfileVisible && currentPlayer" class="player-profile-overlay" @click="hideProfile">
+                    <div class="player-profile-card" @click.stop>
+                        <img :src="currentPlayer.profile_image" :alt="currentPlayer.name" class="profile-main-image">
+                        <div class="profile-number">{{ currentPlayer.number }}</div>
+                        <div class="profile-name-container">
+                            <div class="profile-position">{{ currentPlayer.position_long }}</div>
+                            <div class="profile-name">{{ currentPlayer.name }}</div>
+                        </div>
+                        <div class="profile-chart-container">
+                            <canvas id="radarChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </transition>
+
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/t-flick-keyboard@1/dist/js/index.min.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/main.js"></script>
+    <audio id="bgm-player" src="audios/bgm.mp3" loop></audio>
+</body>
+</html>
