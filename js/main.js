@@ -12,9 +12,15 @@ function goToAdScreen() {
         mainContent.classList.add('hidden');
         // 広告画面を表示する
         adScreen.style.display = 'block';
-        // 広告動画の音量を戻し、再生する
+        // 広告動画の音量を戻し、再生する（自動再生ポリシーで弾かれた場合に備えてミュートにフォールバック）
         adVideo.volume = 1.0;
-        adVideo.play();
+        const playPromise = adVideo.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+                adVideo.muted = true;
+                adVideo.play().catch(() => {});
+            });
+        }
         // BGMを停止し、再生位置を最初に戻す
         if (bgmPlayer) {
             bgmPlayer.pause();
@@ -76,14 +82,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (bgmPlayer) {
             bgmPlayer.volume = 0.3;
-            bgmPlayer.play();
+            const bgmPromise = bgmPlayer.play();
+            if (bgmPromise && typeof bgmPromise.catch === 'function') {
+                bgmPromise.catch(() => {});
+            }
         }
 
+        // 広告動画は一旦アンミュートしてからフェードアウトさせる
+        adVideo.muted = false;
         let volume = 1.0;
         const fadeOut = setInterval(() => {
             if (volume > 0.1) {
                 volume -= 0.1;
-                adVideo.volume = volume;
+                adVideo.volume = Math.max(volume, 0);
             } else {
                 adVideo.pause();
                 clearInterval(fadeOut);
@@ -115,6 +126,8 @@ const app = Vue.createApp({
             defaultPlayerIcon: 'images/default-icon.png',
             chartInstance: null,
             profileTimeoutId: null,
+            chartDestroyTimeoutId: null,
+            pitchResetTimeoutId: null,
         };
     },
     mounted() {
@@ -125,39 +138,72 @@ const app = Vue.createApp({
             goToAdScreen();
         },
         async fetchPlayers() {
-            try {
-                const response = await fetch(gasUrl);
-                if (!response.ok) {
-                    throw new Error('選手データの取得に失敗しました。');
+            // GAS の URL が無効、もしくは file:// プロトコルなど fetch が使えない環境ならローカルデータへ
+            const canFetch =
+                typeof gasUrl === 'string' &&
+                gasUrl.startsWith('http') &&
+                typeof window.fetch === 'function' &&
+                location.protocol !== 'file:';
+
+            if (canFetch) {
+                try {
+                    const response = await fetch(gasUrl);
+                    if (!response.ok) {
+                        throw new Error('選手データの取得に失敗しました。HTTP ' + response.status);
+                    }
+                    const data = await response.json();
+                    if (data && Array.isArray(data.players) && data.players.length > 0) {
+                        this.header = data.header || null;
+                        this.players = this.processPlayerData(data.players);
+                        this.isLoading = false;
+                        return;
+                    }
+                    throw new Error('取得した選手データが空です。');
+                } catch (error) {
+                    console.warn('リモートデータの取得に失敗したため、ローカルのデータを読み込みます。', error);
                 }
-                const data = await response.json();
-                this.header = data.header;
-                this.players = this.processPlayerData(data.players);
-            } catch (error) {
-                console.error(error);
-                console.log('データの取得に失敗したため、開発用のダミーデータを読み込みます。');
-                this.loadDummyData();
-            } finally {
-                this.isLoading = false;
+            } else {
+                console.info('fetch が利用できない環境のため、ローカルのデータを読み込みます。');
             }
+            this.loadDummyData();
+            this.isLoading = false;
         },
         processPlayerData(players) {
-            return players.map(player => {
+            // 同一選手 / リロード時の表示ブレを防ぐため、id をシードにした擬似乱数で能力値を生成する
+            const seededRandom = (seed) => {
+                let s = (seed * 9301 + 49297) % 233280;
+                return () => {
+                    s = (s * 9301 + 49297) % 233280;
+                    return s / 233280;
+                };
+            };
+            return players.map((player, index) => {
                 const coords = FORMATION_COORDS[player.position] || FORMATION_COORDS['DEFAULT'];
+                const rand = seededRandom((player.id || index + 1) * 31);
                 const stats = {
-                    speed: Math.floor(Math.random() * 61) + 40,
-                    power: Math.floor(Math.random() * 61) + 40,
-                    technique: Math.floor(Math.random() * 61) + 40,
-                    defense: Math.floor(Math.random() * 61) + 40,
-                    stamina: Math.floor(Math.random() * 61) + 40,
+                    speed: Math.floor(rand() * 61) + 40,
+                    power: Math.floor(rand() * 61) + 40,
+                    technique: Math.floor(rand() * 61) + 40,
+                    defense: Math.floor(rand() * 61) + 40,
+                    stamina: Math.floor(rand() * 61) + 40,
                 };
                 return { ...player, pitch_x: coords.x, pitch_y: coords.y, stats };
             });
         },
         loadDummyData() {
-            this.header = { title: "ザスパ群馬 選手名鑑", description: "2025シーズンのメンバー紹介...", image: "https://www.thespa.co.jp/assets/img/logo_thespa.png" };
-            const dummyPlayers = [];
-            this.players = this.processPlayerData(dummyPlayers);
+            // data.js で定義された localData を使う（読み込まれていない場合のセーフネットも用意）
+            const fallback = (typeof localData !== 'undefined' && localData)
+                ? localData
+                : {
+                    header: {
+                        title: "ザスパ群馬 選手名鑑",
+                        description: "選手データを読み込めませんでした。",
+                        image: ""
+                    },
+                    players: []
+                };
+            this.header = fallback.header || null;
+            this.players = this.processPlayerData(fallback.players || []);
         },
         onPlayerClick(player) {
             if (this.isProfileVisible && this.currentPlayer?.id === player.id) {
@@ -176,6 +222,15 @@ const app = Vue.createApp({
         showProfile(player) {
             if (this.profileTimeoutId) {
                 clearTimeout(this.profileTimeoutId);
+                this.profileTimeoutId = null;
+            }
+            if (this.chartDestroyTimeoutId) {
+                clearTimeout(this.chartDestroyTimeoutId);
+                this.chartDestroyTimeoutId = null;
+            }
+            if (this.pitchResetTimeoutId) {
+                clearTimeout(this.pitchResetTimeoutId);
+                this.pitchResetTimeoutId = null;
             }
 
             const scale = 1.5;
@@ -198,18 +253,25 @@ const app = Vue.createApp({
             }
             this.isProfileVisible = false;
 
-            // ★★★★★ 修正点 ★★★★★
-            // アニメーションが終わるのを待ってからグラフを破壊する
-            setTimeout(() => {
+            // アニメーション (opacity 0.5s) が終わってからチャートを破棄する
+            if (this.chartDestroyTimeoutId) {
+                clearTimeout(this.chartDestroyTimeoutId);
+            }
+            this.chartDestroyTimeoutId = setTimeout(() => {
                 if (this.chartInstance) {
-                    this.chartInstance.destroy();
+                    try { this.chartInstance.destroy(); } catch (e) { /* noop */ }
                     this.chartInstance = null;
                 }
-            }, 500); // cssの`transition: opacity 0.5s ease;` に合わせる
+                this.chartDestroyTimeoutId = null;
+            }, 500);
 
-            setTimeout(() => {
+            if (this.pitchResetTimeoutId) {
+                clearTimeout(this.pitchResetTimeoutId);
+            }
+            this.pitchResetTimeoutId = setTimeout(() => {
                 this.pitchStyle = { transform: 'scale(1) translate(0, 0)' };
                 this.currentPlayer = null;
+                this.pitchResetTimeoutId = null;
             }, 300);
         },
         resetViewState() {
